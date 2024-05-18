@@ -45,14 +45,14 @@ BOOL APIENTRY DllMain(
     switch (ul_reason_for_call) {
         case DLL_PROCESS_ATTACH:
 
-#ifdef _DEBUG
+//#ifdef _DEBUG
             if (!AllocConsole()) {
                 return FALSE;
             }
 
             freopen("CONOUT$", "w", stdout);
             freopen("CONOUT$", "w", stderr);
-#endif
+//#endif
 
             hThread = CreateThread(
                 NULL, 0,
