@@ -5,6 +5,12 @@
 #include "SDK.hpp"
 #include "SDK/Palia_parameters.hpp"
 
+typedef enum _FunctionType {
+    Func_Invalid = 0,
+    Func_UpdateLockedItemToPlace,
+    Func_PlaceItem
+} FunctionType;
+
 typedef SDK::Params::PlacementComponent_RpcServer_PlaceItem PlaceItemParams_t;
 typedef SDK::Params::PlacementComponent_RpcServer_UpdateLockedItemToPlace UpdateLockedItemToPlaceParams_t;
 
@@ -51,25 +57,24 @@ public:
 };
 
 class PaliaInternal::PositionAdjustment {
-private:
-    static inline SDK::FVector vSavedPosition;
-    static inline SDK::FRotator vSavedRotation;
-    
-    static inline SDK::FVector vSavedAdjustmentPosition;  // For modifying
+public:
+    static inline SDK::FVector vSavedAdjustmentPosition;  // For coordinate adjustment
     static inline SDK::FRotator vSavedAdjustmentRotation;
 
-    static inline SDK::FVector vBackupPosition;
-    static inline SDK::FRotator vBackupRotation;
-
-    static inline BOOL bPositionSaved;
-    static inline BOOL bPositionSet;
+private:
+    static inline SDK::FVector vSavedPosition;  // For saving and placing in desired position
+    static inline SDK::FRotator vSavedRotation;
 
     struct KeyAction {
         int iKey;
         std::function<VOID()> fnAction;
     };
 
+
 public:
+    static inline FunctionType eFunctionType;
+    static inline SDK::UFunction *lpPlaceItemFunction;
+
     static inline BOOL bModified;
     static inline BOOL bGotRequiredParams;
     static inline PlaceItemParams_t PlacementParams;
@@ -80,27 +85,37 @@ public:
     PositionAdjustment(VOID) {
         ZeroMemory(&PlacementParams, sizeof(PlaceItemParams_t));
         
+        lpPlaceItemFunction = NULL;
+        eFunctionType = Func_Invalid;
+
         vSavedPosition = SDK::FVector(0.0f, 0.0f, 0.0f);
         vSavedRotation = SDK::FRotator(0.0f, 0.0f, 0.0f);
         
         vSavedAdjustmentPosition = SDK::FVector(0.0f, 0.0f, 0.0f);
         vSavedAdjustmentRotation = SDK::FRotator(0.0f, 0.0f, 0.0f);
 
-        vBackupPosition = SDK::FVector(0.0f, 0.0f, 0.0f);
-        vBackupRotation = SDK::FRotator(0.0f, 0.0f, 0.0f);
-
-        bPositionSaved = FALSE;
-        bPositionSet = FALSE;
         bModified = FALSE;
         bGotRequiredParams = FALSE;
     }
 
-    static VOID EvaluateActionKeyPress(VOID);
+    static BOOL GetPlaceItemFunction(SDK::UPlacementComponent *lpPlacementComponent);
+
+    static VOID EvaluateActionKeyPress(
+        LPVOID *lpParams,
+        SDK::UFunction **lpFunction,
+        const SDK::UObject *lpClass
+    );
     static VOID EvaluateAdjustmentKeyPress(VOID);
 
-    static VOID SavePositionForAdjustment(SDK::FVector vPosition, SDK::FRotator vRotation);
-    //static VOID SavePosition(SDK)
-    static VOID RestorePosition(VOID);
-    //static VOID GetPosition(SDK::FVector vPosition, SDK::FRotator vRotation);
-    //static VOID SetPosition(SDK::FVector vPosition, SDK::FRotator vRotation);
+    static VOID SaveCurrentPosition(LPVOID *lpParams);
+    static VOID SavePositionForAdjustment(
+        SDK::FVector vPosition,
+        SDK::FRotator vRotation
+    );
+    static VOID ApplyModifiedPosition(
+        LPVOID *lpParams,
+        SDK::UFunction **lpFunction,
+        const SDK::UObject *lpClass
+    );
+    //static VOID RestorePosition(VOID);
 };

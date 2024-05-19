@@ -94,22 +94,29 @@ VOID PaliaInternal::HookedProcessEvent(
     const std::string strFunctionName = lpFunction->GetFullName();
     const std::string strClassName = lpClass->GetFullName();
 
+    PositionAdjustment::eFunctionType = Func_Invalid;
+
     if (strClassName.starts_with("PlacementComponent")) {
         SDK::UPlacementComponent *lpPlacementComponent = (SDK::UPlacementComponent *) lpClass;
         lpPlacementComponent->CanPlaceHere = true;
-    
-        /* Positional Adjustment */
+
+        // Positional Adjustment
         if (strFunctionName == PositionAdjustment::strFunc_UpdateLockedItemToPlace) {
+            PositionAdjustment::eFunctionType = Func_UpdateLockedItemToPlace;
             UpdateLockedItemToPlaceParams_t *lpUpdateLckItmParams = (UpdateLockedItemToPlaceParams_t *) lpParams;
+            // Keep grabbing coordinates, until a manual adjustmnet key is pressed
             if (!PositionAdjustment::bModified) {
                 PositionAdjustment::SavePositionForAdjustment(
                     lpUpdateLckItmParams->Position,
                     lpUpdateLckItmParams->Rotation
                 );
-
             }
+            // Evaluate pos/rot adjustment key presses
             PositionAdjustment::EvaluateAdjustmentKeyPress();
         } else if (strFunctionName == PositionAdjustment::strFunc_PlaceItem) {
+            // This is called when an item is placed, we need it to get required params
+            // that we don't have access to when UpdateLockedItemToPlace is called.
+            PositionAdjustment::eFunctionType = Func_PlaceItem;
             PlaceItemParams_t *lpPlaceItemParams = (PlaceItemParams_t *) lpParams;
 
             PositionAdjustment::PlacementParams.Anchor = lpPlaceItemParams->Anchor;
@@ -118,64 +125,89 @@ VOID PaliaInternal::HookedProcessEvent(
             PositionAdjustment::PlacementParams.MetadataFlags = lpPlaceItemParams->MetadataFlags;
             PositionAdjustment::bGotRequiredParams = TRUE;
         }
-
-        PositionAdjustment::EvaluateActionKeyPress();
-        // TODO, this needs to be called only on UpdateLockedItemToPlace func, and it needs to have current pos and rot passed to it
     }
+    
+    // Evaluate action key presses, this can be used to save position,
+    //  restore position, or place item with modified position.
+    PositionAdjustment::EvaluateActionKeyPress(
+        &lpParams,
+        &lpFunction,
+        lpClass
+    );
 
+    if (Func_PlaceItem == PositionAdjustment::eFunctionType && PositionAdjustment::bModified) {
+        PlaceItemParams_t *lpPlaceItemParams = (PlaceItemParams_t *) lpParams;
+        lpPlaceItemParams->Position = PositionAdjustment::vSavedAdjustmentPosition;
+        lpPlaceItemParams->Rotation = PositionAdjustment::vSavedAdjustmentRotation;
+
+        PositionAdjustment::bModified = FALSE;
+    }
+    
     OriginalProcessEvent(lpClass, lpFunction, lpParams);
 }
 
-VOID PaliaInternal::PositionAdjustment::SavePositionForAdjustment(SDK::FVector vPosition, SDK::FRotator vRotation) {
+BOOL PaliaInternal::PositionAdjustment::GetPlaceItemFunction(
+    SDK::UPlacementComponent *lpPlacementComponent
+) {
+    if (NULL == lpPlacementComponent) {
+        fprintf(
+            stderr,
+            "[-] PlacementComponent is NULL\n"
+        );
+        return FALSE;
+    }
+
+    if (NULL != lpPlaceItemFunction) {
+        return TRUE;
+    }
+
+    lpPlaceItemFunction = (SDK::UFunction *) lpPlacementComponent->FindObject(
+        strFunc_PlaceItem
+    );
+
+    if (NULL == lpPlaceItemFunction) {
+        fprintf(
+            stderr,
+            "[-] Failed to get PlaceItem function\n"
+        );
+        return FALSE;
+    }
+    return TRUE;
+}
+
+VOID PaliaInternal::PositionAdjustment::SavePositionForAdjustment(
+    SDK::FVector vPosition,
+    SDK::FRotator vRotation
+) {
     vSavedAdjustmentPosition = vPosition;
     vSavedAdjustmentRotation = vRotation;
 }
 
-VOID SaveCurrentPosition(VOID) {
-    vSavedPosition = vCurrentPosition;
-    vSavedRotation = vCurrentRotation;
+VOID PaliaInternal::PositionAdjustment::SaveCurrentPosition(LPVOID *lpParams) {
+    UpdateLockedItemToPlaceParams_t *lpUpdateLckItmParams = *(UpdateLockedItemToPlaceParams_t **) lpParams;
+    vSavedPosition = lpUpdateLckItmParams->Position;
+    vSavedRotation = lpUpdateLckItmParams->Rotation;
 }
 
-VOID PaliaInternal::PositionAdjustment::RestorePosition(VOID) {
-    vSavedPosition = vBackupPosition;
-    vSavedRotation = vBackupRotation;
+VOID PaliaInternal::PositionAdjustment::ApplyModifiedPosition(
+    LPVOID *lpParams,
+    SDK::UFunction **lpFunction,
+    const SDK::UObject *lpClass
+) {
+    if (Func_UpdateLockedItemToPlace == eFunctionType && bGotRequiredParams) {
+        SDK::UPlacementComponent *lpPlacementComponent = (SDK::UPlacementComponent *) lpClass;
+
+        if (!GetPlaceItemFunction(lpPlacementComponent)) {
+            return;
+        }
+
+        PlacementParams.Position = vSavedPosition;
+        PlacementParams.Rotation = vSavedRotation;
+
+        *lpFunction = lpPlaceItemFunction;
+        *lpParams = (LPVOID) & PlacementParams;
+    }
 }
-
-//VOID PaliaInternal::PositionAdjustment::GetPosition(SDK::FVector vPosition, SDK::FRotator vRotation) {
-//    vCurrentPosition = vPosition;
-//    vCurrentRotation = vRotation;
-//
-//    if (vSavedPosition.X == vCurrentPosition.X && vSavedPosition.Y == vCurrentPosition.Y && vSavedPosition.Z == vCurrentPosition.Z) {
-//        return;
-//    }
-//    printf(
-//        "[+] Current Position: %f %f %f\n"
-//        "[+] Current Rotation: %f %f %f\n",
-//        vCurrentPosition.X,
-//        vCurrentPosition.Y,
-//        vCurrentPosition.Z,
-//        vCurrentRotation.Pitch,
-//        vCurrentRotation.Yaw,
-//        vCurrentRotation.Roll
-//    );
-//}
-
-//VOID PaliaInternal::PositionAdjustment::SetPosition(SDK::FVector vPosition, SDK::FRotator vRotation) {
-//    vCurrentPosition = vPosition;
-//    vCurrentRotation = vRotation;
-//
-//    printf(
-//        "[+] New Position: %f %f %f\n"
-//        "[+] New Rotation: %f %f %f\n",
-//        vCurrentPosition.X,
-//        vCurrentPosition.Y,
-//        vCurrentPosition.Z,
-//        vCurrentRotation.Pitch,
-//        vCurrentRotation.Yaw,
-//        vCurrentRotation.Roll
-//    );
-//
-//}
 
 VOID PaliaInternal::PositionAdjustment::EvaluateAdjustmentKeyPress(VOID) {
     struct KeyAdjustment {
@@ -185,75 +217,58 @@ VOID PaliaInternal::PositionAdjustment::EvaluateAdjustmentKeyPress(VOID) {
     };
 
     std::vector<KeyAdjustment> adjustments = {
-        /* Z */
+        // Z
         { VK_UP,        { 0.0f, 0.0f, 1.0f },  { 0.0f, 0.0f, 0.0f } },
         { VK_DOWN,      { 0.0f, 0.0f, -1.0f }, { 0.0f, 0.0f, 0.0f } },
-        /* Y */
+        // Y
         { VK_NUMPAD2,   { 0.0f, 1.0f, 0.0f },  { 0.0f, 0.0f, 0.0f } },
         { VK_NUMPAD8,   { 0.0f, -1.0f, 0.0f }, { 0.0f, 0.0f, 0.0f } },
-        /* X */
+        // X
         { VK_NUMPAD6,     { 1.0f, 0.0f, 0.0f },  { 0.0f, 0.0f, 0.0f } },
         { VK_NUMPAD4,      { -1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f } },
 
-        /* Yaw */
+        // Yaw
         { VK_NUMPAD9, { 0.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f } },
         { VK_NUMPAD7, { 0.0f, 0.0f, 0.0f }, { 0.0f, -1.0f, 0.0f } },
-        /* Pitch */
+        // Pitch
         { VK_NUMPAD3, { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f } },
         { VK_NUMPAD1, { 0.0f, 0.0f, 0.0f }, { -1.0f, 0.0f, 0.0f } },
-        /* Roll */
+        // Roll
         { VK_NUMPAD5, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f } },
         { VK_NUMPAD0, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, -1.0f } }
     };
 
     for (const auto &adj : adjustments) {
         if (GetAsyncKeyState(adj.iKey)) {
-            /*SetPosition(
-                SDK::FVector(
-                    vCurrentPosition.X + adj.vPositionAdjustment.X,
-                    vCurrentPosition.Y + adj.vPositionAdjustment.Y,
-                    vCurrentPosition.Z + adj.vPositionAdjustment.Z
-                ),
-                SDK::FRotator(
-                    vCurrentRotation.Pitch + adj.vRotationAdjustment.Pitch,
-                    vCurrentRotation.Yaw + adj.vRotationAdjustment.Yaw,
-                    vCurrentRotation.Roll + adj.vRotationAdjustment.Roll
-                )
-            );*/
-            vSavedPosition.X += adj.vPositionAdjustment.X;
-            vSavedPosition.Y += adj.vPositionAdjustment.Y;
-            vSavedPosition.Z += adj.vPositionAdjustment.Z;
-            vSavedRotation.Pitch += adj.vRotationAdjustment.Pitch;
-            vSavedRotation.Yaw += adj.vRotationAdjustment.Yaw;
-            vSavedRotation.Roll += adj.vRotationAdjustment.Roll;
+            vSavedAdjustmentPosition.X += adj.vPositionAdjustment.X;
+            vSavedAdjustmentPosition.Y += adj.vPositionAdjustment.Y;
+            vSavedAdjustmentPosition.Z += adj.vPositionAdjustment.Z;
+            vSavedAdjustmentRotation.Pitch += adj.vRotationAdjustment.Pitch;
+            vSavedAdjustmentRotation.Yaw += adj.vRotationAdjustment.Yaw;
+            vSavedAdjustmentRotation.Roll += adj.vRotationAdjustment.Roll;
 
-            printf(
-                "[+] New Position: %f %f %f\n"
-                "[+] New Rotation: %f %f %f\n",
-                vSavedPosition.X,
-                vSavedPosition.Y,
-                vSavedPosition.Z,
-                vSavedRotation.Pitch,
-                vSavedRotation.Yaw,
-                vSavedRotation.Roll
-            );
             bModified = true;
             break;
         }
     }
 }
 
-VOID PaliaInternal::PositionAdjustment::EvaluateActionKeyPress(VOID) {
+VOID PaliaInternal::PositionAdjustment::EvaluateActionKeyPress(
+    LPVOID *lpParams,
+    SDK::UFunction **lpFunction,
+    const SDK::UObject *lpClass
+) {
     std::vector<KeyAction> keyActions = {
-        { VK_F6,  []() { RestoreBackupPosition(); } },
-        { VK_F9,  []() { SavePosition(); } },
-        { VK_F10, []() { RestorePosition(); } },
-        // Add other key-action mappings here
+        //{ VK_F6,  []() { RestorePosition(); } },
+        { VK_F9,  [lpParams]() { SaveCurrentPosition(lpParams); }},
+        { VK_F10, [lpParams, lpFunction, lpClass]() { ApplyModifiedPosition(lpParams, lpFunction, lpClass); } }
+        // For future mappings
     };
 
-    // F6 = Restore Backup Position
-    // F9 = Save Position
-    // F10 = Place Item
-    // ...
-    
+    for (const auto& action : keyActions) {
+        if (GetAsyncKeyState(action.iKey)) {
+            action.fnAction();
+            break;
+        }
+    }
 }
